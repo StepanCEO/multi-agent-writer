@@ -1,0 +1,15 @@
+[project]
+name = "multi-agent-writer"
+version = "0.1.0"
+description = "Multi-agent pipeline: researcher, writer, critic and editor agents collaborate to write articles"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.50",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
