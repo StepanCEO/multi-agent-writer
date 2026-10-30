@@ -1,33 +1,58 @@
 # multi-agent-writer
 
-Multi-agent pipeline where four LLM agents collaborate to write an article:
-a **Researcher** outlines the topic, a **Writer** drafts, a **Critic** reviews
-(and sends the draft back for revision), and an **Editor** does the final polish.
+Мультиагентный конвейер, в котором четыре LLM-агента вместе пишут статью: исследователь, автор, критик и редактор. Это наглядный пример оркестрации агентов на чистом OpenAI SDK для тех, кто хочет понять, как такие системы устроены изнутри.
 
-Built on the plain OpenAI SDK — no frameworks, so the orchestration logic is
-fully visible in ~60 lines of [pipeline.py](multi_agent_writer/pipeline.py).
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-SDK-412991?logo=openai&logoColor=white)
+![Без фреймворков](https://img.shields.io/badge/фреймворки-не%20нужны-lightgrey)
+![Тесты](https://img.shields.io/badge/тесты-pytest-0A9EDC?logo=pytest&logoColor=white)
+![Лицензия](https://img.shields.io/badge/лицензия-MIT-green)
 
+## Зачем
+
+Один запрос к LLM вида «напиши статью» обычно даёт ровный, но поверхностный текст. Здесь работа разбита на роли, как в редакции. Исследователь продумывает угол и план, автор пишет черновик, критик находит слабые места и возвращает текст на доработку, редактор вычитывает финал. Агентных фреймворков нет: вся оркестрация лежит в одном файле [pipeline.py](multi_agent_writer/pipeline.py) примерно на 60 строк, и её легко прочитать целиком.
+
+## Что умеет
+
+- 🧭 **Researcher** превращает тему в угол подачи, план из 4–6 разделов и ключевые тезисы.
+- ✍️ **Writer** пишет черновик в Markdown на 600–900 слов и переписывает его по замечаниям.
+- 🧐 **Critic** оценивает структуру, ясность, полноту и правдоподобие и возвращает JSON-вердикт `{approved, feedback}`.
+- 🪄 **Editor** делает финальную вычитку грамматики и ритма и следит, чтобы статья начиналась с заголовка `# Title`.
+- 🔁 Цикл Writer ↔ Critic ограничен `MAX_REVISIONS` (по умолчанию 2). Если критик так и не одобрил текст, редактор всё равно отрабатывает: лучше статья с оговорками, чем никакой.
+- 🛟 Если критик вернул невалидный JSON, ответ считается одобрением. Это защищает от бесконечного цикла.
+- 🌐 Тема может быть на любом языке, и агенты пишут на языке темы.
+- Результат сохраняется в `output/<slug-темы>.md`.
+
+## Схема
+
+```mermaid
+flowchart LR
+    T["Тема"] --> R["Researcher<br/>угол, план, тезисы"]
+    R --> W["Writer<br/>черновик / правка"]
+    W --> C{"Critic<br/>одобрено?"}
+    C -- "нет, лимит правок не исчерпан" --> W
+    C -- "да или лимит исчерпан" --> E["Editor<br/>финальная вычитка"]
+    E --> O["output/slug.md"]
 ```
-topic ──> Researcher ──> Writer ──> Critic ──┐
-                           ▲                 │ approved?
-                           │    no (≤ N)     │
-                           └─────────────────┤
-                                             │ yes / limit reached
-                                             ▼
-                                          Editor ──> article.md
-```
 
-## Quickstart
+## Стек
+
+- Python 3.10+
+- OpenAI SDK (Chat Completions), модель по умолчанию `gpt-4o-mini`
+- python-dotenv: настройки из `.env`
+- pytest: тесты на «заскриптованной» фейковой LLM
+
+## Быстрый старт
 
 ```bash
 git clone https://github.com/StepanCEO/multi-agent-writer
 cd multi-agent-writer
 pip install -r requirements.txt
-cp .env.example .env          # add your OPENAI_API_KEY
-python -m multi_agent_writer "Why RAG beats fine-tuning for FAQ bots"
+cp .env.example .env          # впишите OPENAI_API_KEY
+python -m multi_agent_writer "Почему RAG лучше дообучения для FAQ-ботов"
 ```
 
-The article lands in `output/<topic-slug>.md`.
+Пример лога (сколько будет правок, зависит от ответов модели):
 
 ```
 $ python -m multi_agent_writer "Why RAG beats fine-tuning for FAQ bots"
@@ -42,57 +67,65 @@ Editor: final polish
 Done: output/why-rag-beats-fine-tuning-for-faq-bots.md (revisions: 1)
 ```
 
-Works with topics in any language — agents answer in the language of the topic.
+Параметры командной строки:
 
-## How it works
+| Флаг | Что делает |
+|------|------------|
+| `-o`, `--output` | путь к итоговому `.md` (по умолчанию `output/<slug-темы>.md`) |
+| `-q`, `--quiet` | не выводить лог прогресса |
 
-| Agent | Role | Output |
-|-------|------|--------|
-| Researcher | Turns the topic into an angle + outline + key points | research notes |
-| Writer | Writes a 600–900 word markdown draft; revises on feedback | draft |
-| Critic | Scores structure/clarity/completeness, returns JSON verdict | `{approved, feedback}` |
-| Editor | Final grammar/flow pass, guarantees a `# Title` | final article |
+## Роли агентов
 
-The Writer↔Critic loop is bounded by `MAX_REVISIONS` (default 2). If the critic
-never approves, the editor still runs — best effort beats no article.
+| Агент | Роль | Что возвращает |
+|-------|------|----------------|
+| Researcher | Превращает тему в угол подачи, план и ключевые тезисы | заметки для автора |
+| Writer | Пишет черновик в Markdown на 600–900 слов, правит по замечаниям | черновик |
+| Critic | Оценивает структуру, ясность, полноту и правдоподобие | `{approved, feedback}` |
+| Editor | Финальная вычитка, заголовок `# Title` | готовая статья |
 
-Each agent gets a `complete(system, user) -> str` callable instead of a client
-object, so the whole pipeline is unit-tested with a scripted fake LLM — no API
-key needed to run the tests.
+Каждый агент получает не клиент OpenAI, а функцию `complete(system, user) -> str`. Благодаря этому весь конвейер тестируется с фейковой LLM, без сети и API-ключа.
 
-## Configuration (.env)
+## Настройки (`.env`)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | — | required |
-| `MODEL` | `gpt-4o-mini` | any chat completions model |
-| `MAX_REVISIONS` | `2` | max Writer↔Critic loops |
-| `TEMPERATURE` | `0.7` | sampling temperature |
+| Переменная | По умолчанию | Описание |
+|------------|--------------|----------|
+| `OPENAI_API_KEY` | — | обязательно |
+| `MODEL` | `gpt-4o-mini` | любая модель Chat Completions |
+| `MAX_REVISIONS` | `2` | максимум циклов Writer ↔ Critic |
+| `TEMPERATURE` | `0.7` | температура генерации |
 
-## Tests
-
-```bash
-pip install pytest
-pytest
-```
-
-## Project structure
+## Как устроено
 
 ```
 multi_agent_writer/
-├── __main__.py        # CLI entry point
-├── config.py          # .env settings
-├── llm.py             # thin OpenAI wrapper
-├── pipeline.py        # orchestration + revision loop
+├── __main__.py        # CLI: тема → статья в output/
+├── config.py          # настройки из .env
+├── llm.py             # тонкая обёртка над OpenAI SDK
+├── pipeline.py        # оркестрация и цикл правок
 └── agents/
+    ├── base.py        # тип CompleteFn
     ├── researcher.py
     ├── writer.py
-    ├── critic.py      # JSON verdict parsing
+    ├── critic.py      # разбор JSON-вердикта (в том числе обёрнутого в ```)
     └── editor.py
 tests/
-└── test_pipeline.py   # fake-LLM tests of the orchestration
+└── test_pipeline.py   # тесты оркестрации на фейковой LLM
 ```
 
-## License
+## Тесты
 
-MIT
+```bash
+pip install pytest
+python -m pytest
+```
+
+Тесты проверяют, что при одобрении с первого раза каждый агент вызывается ровно один раз, что после отказа критика запускается правка, что лимит правок соблюдается, а также разбор JSON в ```-блоке и реакцию на «мусорный» ответ критика.
+
+## Лицензия
+
+[MIT](LICENSE)
+
+## Автор
+
+**Степан** — fullstack и AI-разработчик
+Портфолио: [stepanceo.github.io/Portfolio](https://stepanceo.github.io/Portfolio/) · Telegram: [@SStepCEO](https://t.me/SStepCEO)
